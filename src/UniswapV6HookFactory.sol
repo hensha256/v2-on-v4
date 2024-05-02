@@ -112,6 +112,8 @@ contract UniswapV6HookFactory is IUniswapV6HookFactory {
         getPair[token1][token0] = deployAddress; // populate mapping in the reverse direction
         allPairs.push(deployAddress);
 
+        // call v4 initialize hook
+
         emit HookCreated(token0, token1, deployAddress, allPairs.length);
     }
 
