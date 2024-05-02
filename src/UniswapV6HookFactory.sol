@@ -81,36 +81,11 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
         if(getPair[token0][token1] != address(0) || getPair[token1][token0] != address(0)) {
             revert PairExists();
         }
-        
-        getPair[token0][token1] = pair;
-        getPair[token1][token0] = pair; // populate mapping in the reverse direction
-        allPairs.push(pair);
 
         // write to transient storage: poolManager, token0, token1
         writeTransientStorage(token0, token1);
         // deploy hook (expect callback to parameters)
         address deployAddress = new V2Hook{salt: _salt}();
-        // delete the transient storage
-
-        // Validate hook permissions https://github.com/Uniswap/v4-core/blob/hooks-return-delta/src/libraries/Hooks.sol#L21 in the address
-        
-        /* 
-            maybe (probably not) uint256 internal constant BEFORE_INITIALIZE_FLAG = 1 << 159; 
-            Will definitely need 
-    
-            uint256 internal constant BEFORE_ADD_LIQUIDITY_FLAG = 1 << 157; // (Bit 157)
-            uint256 internal constant BEFORE_SWAP_FLAG = 1 << 153; // (Bit 153)
-            uint256 internal constant AFTER_SWAP_FLAG = 1 << 152; // (Bit 152)
-
-            uint256 internal constant BEFORE_SWAP_RETURNS_DELTA_FLAG = 1 << 149;
-            uint256 internal constant AFTER_SWAP_RETURNS_DELTA_FLAG = 1 << 148;
-            First byte would be 
-            0010 0011
-            0x23 
-            Second byte would be 
-            1100 xxxx
-            0xCX
-        */
 
         if(
             bytes20(deployAddress)[0] != FIRST_BYTE || 
@@ -118,6 +93,10 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
         ) {
             revert InvalidPermissions();
         }
+
+        getPair[token0][token1] = deployAddress;
+        getPair[token1][token0] = deployAddress; // populate mapping in the reverse direction
+        allPairs.push(deployAddress);
 
         emit HookCreated(token0, token1, pair, allPairs.length);
     }
