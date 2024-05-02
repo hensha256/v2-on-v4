@@ -5,7 +5,7 @@ import {IUniswapV6HookFactory} from "./IUniswapV6HookFactory.sol";
 import {V2Hook} from "./V2Hook.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
-contract UniswapV2Factory is IUniswapV6HookFactory {
+contract UniswapV6HookFactory is IUniswapV6HookFactory {
 
     error InvalidPermissions();
     error IdenticalAddresses();
@@ -67,16 +67,16 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
     function createHook(uint256 _salt, address _tokenA, address _tokenB) external returns (address hook) {
 
         // Validate tokenA and tokenB are not the same address
-        if(tokenA == tokenB) {
+        if(_tokenA == _tokenB) {
             revert IdenticalAddresses();
         }
         // Validate tokenA and tokenB are not the zero address
-        if(tokenA == address(0) || tokenB == address(0)) {
+        if(_tokenA == address(0) || _tokenB == address(0)) {
             revert ZeroAddress();
         }
 
         // sort the tokens
-        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        (address token0, address token1) = _tokenA < _tokenB ? (_tokenA, _tokenB) : (_tokenB, _tokenA);
         // Validate the pair does not already exist
         if(getPair[token0][token1] != address(0) || getPair[token1][token0] != address(0)) {
             revert PairExists();
@@ -85,7 +85,7 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
         // write to transient storage: poolManager, token0, token1
         writeTransientStorage(token0, token1);
         // deploy hook (expect callback to parameters)
-        address deployAddress = new V2Hook{salt: _salt}();
+        address deployAddress = address(new V2Hook{salt: _salt}());
 
         if(
             bytes20(deployAddress)[0] != FIRST_BYTE || 
@@ -98,7 +98,7 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
         getPair[token1][token0] = deployAddress; // populate mapping in the reverse direction
         allPairs.push(deployAddress);
 
-        emit HookCreated(token0, token1, pair, allPairs.length);
+        emit HookCreated(token0, token1, deployAddress, allPairs.length);
     }
 
 }
