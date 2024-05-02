@@ -1,3 +1,9 @@
 [submodule "lib/v4-core"]
 	path = lib/v4-core
 	url = git@github.com:Uniswap/v4-core.git
+[submodule "lib/v2-core"]
+	path = lib/v2-core
+	url = git@github.com:Uniswap/v2-core.git
+[submodule "lib/solmate"]
+	path = lib/solmate
+	url = git@github.com:transmissions11/solmate.git
