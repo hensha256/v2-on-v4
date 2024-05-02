@@ -22,9 +22,7 @@ contract UniswapV6HookFactory is IUniswapV6HookFactory {
     mapping(address => mapping(address => address)) public getPair;
     address[] public allPairs;
 
-    event HookCreated(address indexed token0, address indexed token1, address pair, uint);
-
-    constructor(address _poolManager) public {
+    constructor(address _poolManager) {
         poolManager = IPoolManager(_poolManager);
     }
 
@@ -49,7 +47,7 @@ contract UniswapV6HookFactory is IUniswapV6HookFactory {
         uint256 uint_token1 = uint256(uint160(token1));
         assembly {
             tstore(TOKEN_0_SLOT, uint_token0)
-            tstore(TRANSIENT_ADDRESS_1, uint_token1)
+            tstore(TOKEN_1_SLOT, uint_token1)
         }
     }
 
@@ -58,7 +56,7 @@ contract UniswapV6HookFactory is IUniswapV6HookFactory {
         uint256 uint_token1;
         assembly {
             uint_token0 := tload(TOKEN_0_SLOT)
-            uint_token1 := tload(TRANSIENT_ADDRESS_1)
+            uint_token1 := tload(TOKEN_1_SLOT)
         }
         token0 = address(uint160(uint_token0));
         token1 = address(uint160(uint_token1));
