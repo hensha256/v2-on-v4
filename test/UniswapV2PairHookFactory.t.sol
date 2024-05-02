@@ -10,7 +10,7 @@ contract UniswapV6HookFactoryTest is Test {
     address tokenA = address(1);
     address tokenB = address(2);
 
-    function setup() public {
+    function setUp() public {
         factory = new UniswapV2PairHookFactoryMock(address(this));
     }
 
@@ -34,9 +34,10 @@ contract UniswapV6HookFactoryTest is Test {
                 1100 xxxx
                 0xCX
             */
-        assertTrue(factory.validPermissions_external(address(0x23C0)));
-        assertTrue(factory.validPermissions_external(address(0x23C1)));
-        assertFalse(factory.validPermissions_external(address(0x22C0)));
-        assertFalse(factory.validPermissions_external(address(0x23F0)));
+        assertTrue(factory.validPermissions_external(address(0x23C0000000000000000000000000000000000001)));
+        assertTrue(factory.validPermissions_external(address(0x23C1000000000000000000000000000000000003)));
+        assertFalse(factory.validPermissions_external(address(0x22C0000000000000000000000000000000000000)));
+        assertFalse(factory.validPermissions_external(address(0x23D0000000000000000000000000000000000001)));
+        assertFalse(factory.validPermissions_external(address(1)));
     }
 }
