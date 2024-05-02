@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IUniswapV2PairHookFactory} from "./interfaces/IUniswapV2PairHookFactory.sol";
 import {V2PairHook} from "./V2PairHook.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "@uniswap/v4-core/src/libraries/PoolKey.sol";
 
 contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
     error InvalidPermissions();
@@ -72,18 +73,22 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
         // write to transient storage: poolManager, token0, token1
         writeTransientStorage(token0, token1);
         // deploy hook (expect callback to parameters)
-        hook = address(new V2PairHook{salt: _salt}());
-
-        if (bytes20(hook)[0] != FIRST_BYTE || bytes20(hook)[1] & THIRD_NIBBLE != THIRD_NIBBLE) {
+        hook = new V2PairHook{salt: _salt}();
+        address hookAddress = address(hook);
+        if (!validPermissions(hookAddress)) {
             revert InvalidPermissions();
         }
 
-        getPair[token0][token1] = hook;
-        getPair[token1][token0] = hook; // populate mapping in the reverse direction
-        allPairs.push(hook);
+        getPair[token0][token1] = hookAddress;
+        getPair[token1][token0] = hookAddress; // populate mapping in the reverse direction
+        allPairs.push(hookAddress);
 
-        // call v4 initialize hook
+        // call v4 initialize pool
+        // fee and tickspacing are irrelevant, so set to 0 and 1
+        PoolKey memory key = PoolKey({token0: token0, token1: token1, fee: 0, tickSpacing: 1, hooks: hook});
 
-        emit HookCreated(token0, token1, hook, allPairs.length);
+        poolManager.initialize(key, 1, hook);
+
+        emit HookCreated(token0, token1, hookAddress, allPairs.length);
     }
 }
