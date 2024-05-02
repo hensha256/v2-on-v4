@@ -2,9 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {IUniswapV2PairHookFactory} from "./interfaces/IUniswapV2PairHookFactory.sol";
-import {V2Hook} from "./V2Hook.sol";
-import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {V2PairHook} from "./V2PairHook.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
 contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
     error InvalidPermissions();
@@ -14,10 +13,8 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
 
     bytes1 constant FIRST_BYTE = 0x23;
     bytes1 constant SECOND_BYTE_MASK = 0xC0;
-    bytes32 constant TOKEN_0_SLOT =
-        0x3cad5d3ec16e143a33da68c00099116ef328a882b65607bec5b2431267934a20;
-    bytes32 constant TOKEN_1_SLOT =
-        0x5b610e8e1835afecdd154863369b91f55612defc17933f83f4425533c435a248;
+    bytes32 constant TOKEN_0_SLOT = 0x3cad5d3ec16e143a33da68c00099116ef328a882b65607bec5b2431267934a20;
+    bytes32 constant TOKEN_1_SLOT = 0x5b610e8e1835afecdd154863369b91f55612defc17933f83f4425533c435a248;
 
     IPoolManager public immutable poolManager;
 
@@ -28,54 +25,34 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
         poolManager = IPoolManager(_poolManager);
     }
 
-    function allPairsLength() external view returns (uint) {
+    function allPairsLength() external view returns (uint256) {
         return allPairs.length;
     }
 
-    function validPermissions(
-        address hookAddress
-    ) internal pure returns (bool) {
-        return (bytes20(hookAddress)[0] == FIRST_BYTE &&
-            bytes20(hookAddress)[1] & SECOND_BYTE_MASK == SECOND_BYTE_MASK);
+    function validPermissions(address hookAddress) internal pure returns (bool) {
+        return (bytes20(hookAddress)[0] == FIRST_BYTE && bytes20(hookAddress)[1] & SECOND_BYTE_MASK == SECOND_BYTE_MASK);
     }
 
-    function parameters()
-        external
-        view
-        returns (address token0, address token1, IPoolManager poolManager)
-    {
+    function parameters() external view returns (address token0, address token1, IPoolManager _poolManager) {
         (token0, token1) = readTransientStorage();
-        poolManager = poolManager;
+        _poolManager = poolManager;
     }
 
     function writeTransientStorage(address token0, address token1) internal {
-        uint256 uint_token0 = uint256(uint160(token0));
-        uint256 uint_token1 = uint256(uint160(token1));
         assembly {
-            tstore(TOKEN_0_SLOT, uint_token0)
-            tstore(TOKEN_1_SLOT, uint_token1)
+            tstore(TOKEN_0_SLOT, token0)
+            tstore(TOKEN_1_SLOT, token1)
         }
     }
 
-    function readTransientStorage()
-        internal
-        returns (address token0, address token1)
-    {
-        uint256 uint_token0;
-        uint256 uint_token1;
+    function readTransientStorage() internal view returns (address token0, address token1) {
         assembly {
-            uint_token0 := tload(TOKEN_0_SLOT)
-            uint_token1 := tload(TOKEN_1_SLOT)
+            token0 := tload(TOKEN_0_SLOT)
+            token1 := tload(TOKEN_1_SLOT)
         }
-        token0 = address(uint160(uint_token0));
-        token1 = address(uint160(uint_token1));
     }
 
-    function createHook(
-        uint256 _salt,
-        address _tokenA,
-        address _tokenB
-    ) external returns (address hook) {
+    function createHook(bytes32 _salt, address _tokenA, address _tokenB) external returns (address hook) {
         // Validate tokenA and tokenB are not the same address
         if (_tokenA == _tokenB) {
             revert IdenticalAddresses();
@@ -86,40 +63,27 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
         }
 
         // sort the tokens
-        (address token0, address token1) = _tokenA < _tokenB
-            ? (_tokenA, _tokenB)
-            : (_tokenB, _tokenA);
+        (address token0, address token1) = _tokenA < _tokenB ? (_tokenA, _tokenB) : (_tokenB, _tokenA);
         // Validate the pair does not already exist
-        if (
-            getPair[token0][token1] != address(0) ||
-            getPair[token1][token0] != address(0)
-        ) {
+        if (getPair[token0][token1] != address(0) || getPair[token1][token0] != address(0)) {
             revert PairExists();
         }
 
         // write to transient storage: poolManager, token0, token1
         writeTransientStorage(token0, token1);
         // deploy hook (expect callback to parameters)
-        address deployAddress = address(new V2PairHook{salt: _salt}());
+        hook = address(new V2PairHook{salt: _salt}());
 
-        if (
-            bytes20(deployAddress)[0] != FIRST_BYTE ||
-            bytes20(deployAddress)[1] & SECOND_BYTE_MASK != SECOND_BYTE_MASK
-        ) {
+        if (bytes20(hook)[0] != FIRST_BYTE || bytes20(hook)[1] & SECOND_BYTE_MASK != SECOND_BYTE_MASK) {
             revert InvalidPermissions();
         }
 
-        getPair[token0][token1] = deployAddress;
-        getPair[token1][token0] = deployAddress; // populate mapping in the reverse direction
-        allPairs.push(deployAddress);
+        getPair[token0][token1] = hook;
+        getPair[token1][token0] = hook; // populate mapping in the reverse direction
+        allPairs.push(hook);
 
         // call v4 initialize hook
 
-        emit HookCreated(token0, token1, deployAddress, allPairs.length);
+        emit HookCreated(token0, token1, hook, allPairs.length);
     }
-
-    function createHook(
-        address tokenA,
-        address tokenB
-    ) external override returns (address hook) {}
 }

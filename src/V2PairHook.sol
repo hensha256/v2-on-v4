@@ -2,7 +2,10 @@
 pragma solidity ^0.8.24;
 
 // V4 core
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 // Solmate
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
@@ -19,8 +22,10 @@ contract V2PairHook is BaseHook, ERC20 {
     uint256 public constant MINIMUM_LIQUIDITY = 10 ** 3;
     ERC20 public immutable token0;
     ERC20 public immutable token1;
+    address public immutable factory;
 
     error BalanceOverflow();
+    error InvalidInitialization();
     error InsufficientLiquidityMinted();
     error InsufficientLiquidityBurnt();
 
@@ -28,7 +33,7 @@ contract V2PairHook is BaseHook, ERC20 {
     // TODO reserves 128
     // TODO delete v2 submodule
     // TODO swap function
-    // TODO combine all hooks to 1
+    // TODO combine all hooks to 1 - separate wrapper for rebasing
 
     uint112 private reserve0;
     uint112 private reserve1;
@@ -38,6 +43,7 @@ contract V2PairHook is BaseHook, ERC20 {
 
     constructor() ERC20("Uniswap V4-V2", "UNI-V4-V2", 18) {
         (token0, token1, poolManager) = IV2PairHookDeployer(msg.sender).parameters();
+        factory = msg.sender;
     }
 
     function getReserves() public view returns (uint112 _reserve0, uint112 _reserve1) {
@@ -79,7 +85,8 @@ contract V2PairHook is BaseHook, ERC20 {
             liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
             _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
         } else {
-            liquidity = Math.min((amount0 * _totalSupply).unsafeDiv(_reserve0), (amount1 * _totalSupply).unsafeDiv(_reserve1));
+            liquidity =
+                Math.min((amount0 * _totalSupply).unsafeDiv(_reserve0), (amount1 * _totalSupply).unsafeDiv(_reserve1));
         }
         if (liquidity == 0) revert InsufficientLiquidityMinted();
         _mint(to, liquidity);
@@ -123,6 +130,23 @@ contract V2PairHook is BaseHook, ERC20 {
     // force reserves to match balances
     function sync() external {
         _update(token0.balanceOf(address(this)), token1.balanceOf(address(this)));
+    }
+
+    ////// hook functions
+
+    function beforeInitialize(address sender, PoolKey calldata key, uint160, bytes calldata)
+        external
+        view
+        override
+        poolManagerOnly
+        returns (bytes4)
+    {
+        // TODO think
+        if (
+            sender != factory || key.fee != 0 || key.tickSpacing != 1
+                || Currency.unwrap(key.currency0) != address(token0) || Currency.unwrap(key.currency1) != address(token1)
+        ) revert InvalidInitialization();
+        return IHooks.beforeInitialize.selector;
     }
 
     // TODO

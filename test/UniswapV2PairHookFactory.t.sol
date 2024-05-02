@@ -6,19 +6,18 @@ import {UniswapV2PairHookFactory} from "../src/UniswapV2PairHookFactory.sol";
 import {UniswapV2PairHookFactoryMock} from "./mocks/UniswapV2PairHookFactoryMock.sol";
 
 contract UniswapV6HookFactoryTest is Test {
-        
-        UniswapV2PairHookFactoryMock factory;
-        address tokenA = address(1);
-        address tokenB = address(2);
+    UniswapV2PairHookFactoryMock factory;
+    address tokenA = address(1);
+    address tokenB = address(2);
 
-        function setup() override public {
-            factory = new UniswapV2PairHookFactoryMock(address(this));
-        }
+    function setup() public {
+        factory = new UniswapV2PairHookFactoryMock(address(this));
+    }
 
-        function test_validPermissions() public {
-            // Validate hook permissions https://github.com/Uniswap/v4-core/blob/hooks-return-delta/src/libraries/Hooks.sol#L21 in the address
-            
-            /* 
+    function test_validPermissions() public {
+        // Validate hook permissions https://github.com/Uniswap/v4-core/blob/hooks-return-delta/src/libraries/Hooks.sol#L21 in the address
+
+        /* 
                 maybe (probably not) uint256 internal constant BEFORE_INITIALIZE_FLAG = 1 << 159; 
                 Will definitely need 
         
@@ -35,9 +34,9 @@ contract UniswapV6HookFactoryTest is Test {
                 1100 xxxx
                 0xCX
             */
-            assertTrue(factory.validPermissions_external(address(0x23C0)));
-            assertTrue(factory.validPermissions_external(address(0x23C1)));
-            assertFalse(factory.validPermissions_external(address(0x22C0)));
-            assertFalse(factory.validPermissions_external(address(0x23F0)));
-        }
+        assertTrue(factory.validPermissions_external(address(0x23C0)));
+        assertTrue(factory.validPermissions_external(address(0x23C1)));
+        assertFalse(factory.validPermissions_external(address(0x22C0)));
+        assertFalse(factory.validPermissions_external(address(0x23F0)));
+    }
 }
