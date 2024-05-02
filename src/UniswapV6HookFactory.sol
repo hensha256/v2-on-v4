@@ -24,8 +24,7 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
 
     event HookCreated(address indexed token0, address indexed token1, address pair, uint);
 
-    constructor(address _feeToSetter, address _poolManager) public {
-        feeToSetter = _feeToSetter;
+    constructor(address _poolManager) public {
         poolManager = IPoolManager(_poolManager);
     }
 
@@ -82,6 +81,10 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
         if(getPair[token0][token1] != address(0) || getPair[token1][token0] != address(0)) {
             revert PairExists();
         }
+        
+        getPair[token0][token1] = pair;
+        getPair[token1][token0] = pair; // populate mapping in the reverse direction
+        allPairs.push(pair);
 
         // write to transient storage: poolManager, token0, token1
         writeTransientStorage(token0, token1);
@@ -115,21 +118,8 @@ contract UniswapV2Factory is IUniswapV6HookFactory {
         ) {
             revert InvalidPermissions();
         }
-       
-        getPair[token0][token1] = pair;
-        getPair[token1][token0] = pair; // populate mapping in the reverse direction
-        allPairs.push(pair);
 
         emit HookCreated(token0, token1, pair, allPairs.length);
     }
 
-    function setFeeTo(address _feeTo) external {
-        require(msg.sender == feeToSetter, 'UniswapV2: FORBIDDEN');
-        feeTo = _feeTo;
-    }
-
-    function setFeeToSetter(address _feeToSetter) external {
-        require(msg.sender == feeToSetter, 'UniswapV2: FORBIDDEN');
-        feeToSetter = _feeToSetter;
-    }
 }
