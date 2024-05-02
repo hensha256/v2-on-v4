@@ -5,7 +5,8 @@ pragma solidity ^0.8.24;
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 // Solmate
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
@@ -19,37 +20,12 @@ contract V2PairHook is BaseHook, ERC20 {
     using SafeTransferLib for ERC20;
     using UnsafeMath for uint256;
 
-    uint256 public constant MINIMUM_LIQUIDITY = 10 ** 3;
-    ERC20 public immutable token0;
-    ERC20 public immutable token1;
-    address public immutable factory;
-
     error BalanceOverflow();
     error InvalidInitialization();
     error InsufficientLiquidityMinted();
     error InsufficientLiquidityBurnt();
-
-    // TODO 6909 integ
-    // TODO reserves 128
-    // TODO delete v2 submodule
-    // TODO swap function
-    // TODO combine all hooks to 1 - separate wrapper for rebasing
-
-    uint112 private reserve0;
-    uint112 private reserve1;
-    uint256 public kLast; // reserve0 * reserve1, as of immediately after the most recent liquidity event
-
-    // TODO lock???
-
-    constructor() ERC20("Uniswap V4-V2", "UNI-V4-V2", 18) {
-        (token0, token1, poolManager) = IV2PairHookDeployer(msg.sender).parameters();
-        factory = msg.sender;
-    }
-
-    function getReserves() public view returns (uint112 _reserve0, uint112 _reserve1) {
-        _reserve0 = reserve0;
-        _reserve1 = reserve1;
-    }
+    error AddLiquidityDirectToHook();
+    error IncorrectSwapAmount();
 
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
     event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
@@ -61,32 +37,57 @@ contract V2PairHook is BaseHook, ERC20 {
         uint256 amount1Out,
         address indexed to
     );
-    event Sync(uint112 reserve0, uint112 reserve1);
+    event Sync(uint128 reserves0, uint128 reserves1);
 
-    // update reserves
-    function _update(uint256 balance0, uint256 balance1) private {
-        if (balance0 > type(uint112).max || balance1 > type(uint112).max) revert BalanceOverflow();
-        reserve0 = uint112(balance0);
-        reserve1 = uint112(balance1);
-        emit Sync(reserve0, reserve1);
+    enum Action {
+        MINT,
+        BURN
     }
+
+    // TODO 6909 integ
+    // TODO delete v2 submodule
+    // TODO swap function
+    // TODO combine all hooks to 1 - separate wrapper for rebasing
+
+    uint256 public constant MINIMUM_LIQUIDITY = 10 ** 3;
+    Currency public immutable currency0;
+    Currency public immutable currency1;
+    address public immutable factory;
+
+    uint128 private reserves0;
+    uint128 private reserves1;
+    uint256 public kLast; // reserves0 * reserves1, as of immediately after the most recent liquidity event
+
+    // TODO lock???
+
+    constructor() ERC20("Uniswap V4-V2", "UNI-V4-V2", 18) {
+        (token0, token1, poolManager) = IV2PairHookDeployer(msg.sender).parameters();
+        factory = msg.sender;
+    }
+
+    function getReserves() public view returns (uint128 _reserves0, uint128 _reserves1) {
+        _reserves0 = reserves0;
+        _reserves1 = reserves1;
+    }
+
+    // ******************** V2 FUNCTIONS ********************
 
     // this low-level function should be called from a contract which performs important safety checks
     function mint(address to) external returns (uint256 liquidity) {
-        (uint112 _reserve0, uint112 _reserve1) = getReserves();
+        (uint128 _reserves0, uint128 _reserves1) = getReserves();
         uint256 _totalSupply = totalSupply;
 
-        uint256 balance0 = token0.balanceOf(address(this));
-        uint256 balance1 = token1.balanceOf(address(this));
-        uint256 amount0 = balance0 - _reserve0;
-        uint256 amount1 = balance1 - _reserve1;
+        uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        uint256 amount0 = balance0 - _reserves0;
+        uint256 amount1 = balance1 - _reserves1;
 
         if (_totalSupply == 0) {
             liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
             _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
         } else {
             liquidity =
-                Math.min((amount0 * _totalSupply).unsafeDiv(_reserve0), (amount1 * _totalSupply).unsafeDiv(_reserve1));
+                Math.min((amount0 * _totalSupply).unsafeDiv(_reserves0), (amount1 * _totalSupply).unsafeDiv(_reserves1));
         }
         if (liquidity == 0) revert InsufficientLiquidityMinted();
         _mint(to, liquidity);
@@ -101,8 +102,8 @@ contract V2PairHook is BaseHook, ERC20 {
         ERC20 _token1 = token1; // gas savings
         uint256 _totalSupply = totalSupply; // gas savings
 
-        uint256 balance0 = _token0.balanceOf(address(this));
-        uint256 balance1 = _token1.balanceOf(address(this));
+        uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
         uint256 liquidity = balanceOf[address(this)];
 
         amount0 = (liquidity * balance0).unsafeDiv(_totalSupply); // using balances ensures pro-rata distribution
@@ -110,10 +111,11 @@ contract V2PairHook is BaseHook, ERC20 {
         if (amount0 == 0 || amount1 == 0) revert InsufficientLiquidityBurnt();
 
         _burn(address(this), liquidity);
+
         _token0.safeTransfer(to, amount0);
         _token1.safeTransfer(to, amount1);
-        balance0 = _token0.balanceOf(address(this));
-        balance1 = _token1.balanceOf(address(this));
+        balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
 
         _update(balance0, balance1);
         emit Burn(msg.sender, amount0, amount1, to);
@@ -123,8 +125,8 @@ contract V2PairHook is BaseHook, ERC20 {
     function skim(address to) external {
         ERC20 _token0 = token0; // gas savings
         ERC20 _token1 = token1; // gas savings
-        _token0.safeTransfer(to, _token0.balanceOf(address(this)) - reserve0);
-        _token1.safeTransfer(to, _token1.balanceOf(address(this)) - reserve1);
+        _token0.safeTransfer(to, _token0.balanceOf(address(this)) - reserves0);
+        _token1.safeTransfer(to, _token1.balanceOf(address(this)) - reserves1);
     }
 
     // force reserves to match balances
@@ -132,7 +134,7 @@ contract V2PairHook is BaseHook, ERC20 {
         _update(token0.balanceOf(address(this)), token1.balanceOf(address(this)));
     }
 
-    ////// hook functions
+    // ******************** HOOK FUNCTIONS ********************
 
     function beforeInitialize(address sender, PoolKey calldata key, uint160, bytes calldata)
         external
@@ -149,10 +151,54 @@ contract V2PairHook is BaseHook, ERC20 {
         return IHooks.beforeInitialize.selector;
     }
 
-    // TODO
+    // Reverts as liquidity should be added by calling `mint` on this contract
+    function beforeAddLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, bytes calldata)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
+        revert AddLiquidityDirectToHook();
+    }
+
+    function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata)
+        external
+        poolManagerOnly
+        returns (bytes4, int128)
+    {
+        bool exactIn = (params.amountSpecified < 0);
+
+        uint256 amountIn;
+        uint256 amountOut;
+        if (exactIn) {
+            amountIn = uint256(-params.amountSpecified);
+            amountOut = _getAmountOut(params.zeroForOne, amountIn);
+        } else {
+            amountOut = uint256(params.amountSpecified);
+            amountIn = _getAmountIn(params.zeroForOne, amountOut);
+        }
+
+        (Currency inputCurrency, Currency outputCurrency) = _getInputOutput(key, params.zeroForOne);
+
+        // take the input tokens of the swap into the pair
+        poolManager.mint(address(this), CurrencyLibrary.toId(inputCurrency), amountIn);
+        poolManager.burn(address(this), CurrencyLibrary.toId(outputCurrency), amountOut);
+
+        // uint balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
+        // uint balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
+        // require(balance0Adjusted.mul(balance1Adjusted) >= uint(_reserves0).mul(_reserves1).mul(1000**2), 'UniswapV2: K');
+
+        _update(balance0, balance1);
+
+        emit Swap(amountIn, amountOut);
+
+        // return -amountSpecified to no-op the concentrated liquidity swap
+        return (IHooks.beforeSwap.selector, int128(-params.amountSpecified));
+    }
+
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize: false,
+            beforeInitialize: true,
             afterInitialize: false,
             beforeAddLiquidity: true,
             afterAddLiquidity: false,
@@ -167,5 +213,55 @@ contract V2PairHook is BaseHook, ERC20 {
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
+    }
+
+    // ******************** INTERNAL FUNCTIONS ********************
+
+    function _update(uint256 balance0, uint256 balance1) private {
+        if (balance0 > type(uint128).max || balance1 > type(uint128).max) revert BalanceOverflow();
+        reserves0 = uint128(balance0);
+        reserves1 = uint128(balance1);
+        emit Sync(reserves0, reserves1);
+    }
+
+    // given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
+    function _getAmountOut(bool zeroForOne, uint256 amountIn) internal pure returns (uint256 amountOut) {
+        require(amountIn > 0, "UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT");
+
+        (uint256 reservesIn, uint256 reservesOut) = zeroForOne ? (reserves0, reserves1) : (reserves1, reserves0);
+        require(reserves0 > 0 && reserves1 > 0, "UniswapV2Library: INSUFFICIENT_LIQUIDITY");
+
+        uint256 amountInWithFee = amountIn * 997;
+        uint256 numerator = amountInWithFee * reservesOut;
+        uint256 denominator = (reservesIn * 1000) + amountInWithFee;
+        amountOut = numerator / denominator;
+    }
+
+    // given an output amount of an asset and pair reserves, returns a required input amount of the other asset
+    function _getAmountIn(bool zeroForOne, uint256 amountOut) internal pure returns (uint256 amountIn) {
+        require(amountOut > 0, "UniswapV2Library: INSUFFICIENT_OUTPUT_AMOUNT");
+
+        (uint256 reservesIn, uint256 reservesOut) = zeroForOne ? (reserves0, reserves1) : (reserves1, reserves0);
+        require(reservesIn > 0 && reservesOut > 0, "UniswapV2Library: INSUFFICIENT_LIQUIDITY");
+
+        uint256 numerator = reservesIn * amountOut * 1000;
+        uint256 denominator = (reservesOut - amountOut) * 997;
+        amountIn = (numerator / denominator) + 1;
+    }
+
+    function _getInputOutput(PoolKey calldata key, bool zeroForOne)
+        internal
+        pure
+        returns (Currency input, Currency output, uint256 amount)
+    {
+        (input, output) = zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
+    }
+
+    function _mint6909s(uint256 amount0, uint256 amount1) internal {
+        poolManager.unlock(abi.encode(Action.MINT, amount0, amount1));
+    }
+
+    function _burn6909s(uint256 amount0, uint256 amount1) internal {
+        poolManager.unlock(abi.encode(Action.BURN, amount0, amount1));
     }
 }
