@@ -27,10 +27,10 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
     IPoolManager public immutable poolManager;
 
     // pairs, always stored token0 -> token1 -> pair, where token0 < token1
-    mapping(address => mapping(address => address)) private _pairs;
+    mapping(address => mapping(address => address)) internal _pairs;
 
-    constructor(address _poolManager) {
-        poolManager = IPoolManager(_poolManager);
+    constructor(IPoolManager _poolManager) {
+        poolManager = _poolManager;
     }
 
     function _validPermissions(address hookAddress) internal pure returns (bool) {
@@ -42,7 +42,7 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
         _poolManager = poolManager;
     }
 
-    function getPairs(address tokenA, address tokenB) external view returns (address) {
+    function getPair(address tokenA, address tokenB) external view returns (address) {
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         return _pairs[token0][token1];
     }

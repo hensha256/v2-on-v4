@@ -3,7 +3,9 @@ pragma solidity ^0.8.24;
 
 // Local
 import {V2PairHook} from "../src/V2PairHook.sol";
+import {V4Router} from "../src/V4Router.sol";
 import {AddLiquidityRouter} from "./mocks/AddLiquidityRouter.sol";
+import {UniswapV2PairHookFactoryMock} from "./mocks/UniswapV2PairHookFactoryMock.sol";
 // Solmate
 import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
 // Forge
@@ -28,6 +30,8 @@ contract V2PairHookTest is Test {
     Currency currency1;
     PoolManager manager;
     AddLiquidityRouter liquidityRouter;
+    V4Router swapRouter;
+    UniswapV2PairHookFactoryMock factory;
 
     function parameters() external view returns (Currency, Currency, IPoolManager) {
         return (currency0, currency1, manager);
@@ -37,11 +41,13 @@ contract V2PairHookTest is Test {
         MockERC20 tokenA = new MockERC20("TEST", "TEST", 18);
         tokenA.mint(address(this), 2 ** 255);
         tokenA.approve(address(liquidityRouter), type(uint256).max);
+        tokenA.approve(address(swapRouter), type(uint256).max);
         Currency currencyA = Currency.wrap(address(tokenA));
 
         MockERC20 tokenB = new MockERC20("TEST2", "TEST2", 18);
         tokenB.mint(address(this), 2 ** 255);
         tokenB.approve(address(liquidityRouter), type(uint256).max);
+        tokenB.approve(address(swapRouter), type(uint256).max);
         Currency currencyB = Currency.wrap(address(tokenB));
 
         (currency0, currency1) = address(tokenA) < address(tokenB) ? (currencyA, currencyB) : (currencyB, currencyA);
@@ -49,6 +55,7 @@ contract V2PairHookTest is Test {
 
     function setUp() public {
         manager = new PoolManager(500000);
+        factory = new UniswapV2PairHookFactoryMock(manager);
         liquidityRouter = new AddLiquidityRouter(manager);
 
         deployMintAndApprove2Currencies();
@@ -76,6 +83,8 @@ contract V2PairHookTest is Test {
             tickSpacing: 1,
             hooks: nativeHook
         });
+
+        swapRouter = new V4Router(manager, nativeHook);
     }
 
     function test_hookAddress_isValid() public view {
@@ -110,5 +119,22 @@ contract V2PairHookTest is Test {
 
         assertEq(balanceBefore + liquidity, balanceAfter);
         assertGt(liquidity, 0);
+    }
+
+    function test_swap_native() public {
+        manager.initialize(nativeKey, SQRT_RATIO_1_1, "");
+
+        // mock pair existing
+        factory.setPair(address(0), Currency.unwrap(currency1), address(nativeHook));
+
+        // add liquidity to native pair
+        uint256 liquidity = liquidityRouter.addLiquidity{value: 1e18}(nativeHook, 1e18, 1e18);
+
+        // swap
+        address[] memory _path = new address[](2);
+        _path[0] = address(0);
+        _path[1] = Currency.unwrap(currency1);
+        swapRouter.swapExactETHForTokens{value: 100}(0, _path, address(this), type(uint256).max);
+        console2.log(vm.lastCallGas().gasTotalUsed);
     }
 }

@@ -3,22 +3,26 @@ pragma solidity ^0.8.24;
 
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {CurrencySettleTake} from "@uniswap/v4-core/src/libraries/CurrencySettleTake.sol";
-import {IV4Router} from "./interfaces/IV4Router.sol";
-import {PathKey} from "./libraries/PathKey.sol";
 
-contract V4Router is IV4Router {
+import {V2PairHook} from "./V2PairHook.sol";
+import {Test, console2} from "forge-std/Test.sol";
+
+contract V4Router is Test, IUnlockCallback {
     using CurrencyLibrary for Currency;
     using CurrencySettleTake for Currency;
     using Hooks for IHooks;
 
     IPoolManager public immutable poolManager;
+    V2PairHook public immutable hook;
 
-    constructor(IPoolManager _manager) {
+    constructor(IPoolManager _manager, V2PairHook _hook) {
+        hook = _hook;
         poolManager = _manager;
     }
 
@@ -30,56 +34,44 @@ contract V4Router is IV4Router {
         IPoolManager.SwapParams params;
     }
 
-    modifier ensure(uint deadline) {
-        require(deadline >= block.timestamp, 'UniswapV2Router: EXPIRED');
+    modifier ensure(uint256 deadline) {
+        require(deadline >= block.timestamp, "UniswapV2Router: EXPIRED");
         _;
     }
 
-    function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline)
+    function swapExactETHForTokens(uint256 amountOutMin, address[] calldata path, address to, uint256 deadline)
         external
         payable
         ensure(deadline)
-        returns (uint[] memory amounts)
+        returns (uint256[] memory amounts)
     {
-        _v4Swap(
-            IV4Router.SwapType.ExactInput,
-            abi.encode(IV4Router.ExactInputParams({
-                currencyIn: CurrencyLibrary.NATIVE,
-                path: path,
-                recipient: to,
-                amountIn: msg.value,
-                amountOutMinimum: uint128(amountOutMin)
-            }))
-        );
-    }
-
-    function _v4Swap(SwapType swapType, bytes memory params) internal {
-        poolManager.unlock(abi.encode(SwapInfo(swapType, msg.sender, params)));
+        poolManager.unlock(abi.encode(amountOutMin, msg.value, path, to));
     }
 
     function unlockCallback(bytes calldata rawData) external returns (bytes memory) {
         require(msg.sender == address(poolManager));
 
-        CallbackData memory data = abi.decode(rawData, (CallbackData));
+        (uint256 amountOutMin, uint256 amountIn, address[] memory path, address to) =
+            abi.decode(rawData, (uint256, uint256, address[], address));
 
-        BalanceDelta delta = poolManager.swap(data.key, data.params, new bytes(0));
+        require(path.length == 2);
+        require(path[0] == address(0));
 
-        if(data.params.zeroForOne) {
-            data.key.currency0.settle(poolManager, data.sender, uint256(int256(-delta.amount0())), false);
-            data.key.currency1.take(poolManager, data.sender, uint256(int256(delta.amount1())), false);
-        } else {
-            data.key.currency1.settle(poolManager, data.sender, uint256(int256(-delta.amount1())), false);
-            data.key.currency0.take(poolManager, data.sender, uint256(int256(delta.amount0())), false);
-        }
-    }
+        PoolKey memory key;
+        key.currency0 = CurrencyLibrary.NATIVE;
+        key.currency1 = Currency.wrap(path[1]);
+        key.fee = 0;
+        key.tickSpacing = 1;
+        key.hooks = hook;
 
-    function _fetchBalances(Currency currency, address user, address deltaHolder)
-        internal
-        view
-        returns (uint256 userBalance, uint256 poolBalance, int256 delta)
-    {
-        userBalance = currency.balanceOf(user);
-        poolBalance = currency.balanceOf(address(poolManager));
-        delta = poolManager.currencyDelta(deltaHolder, currency);
+        IPoolManager.SwapParams memory params =
+            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: -int256(amountIn), sqrtPriceLimitX96: 0});
+
+        BalanceDelta delta = poolManager.swap(key, params, "");
+
+        int128 amount1 = delta.amount1();
+
+        CurrencyLibrary.NATIVE.settle(poolManager, address(this), amountIn, false);
+        key.currency1.take(poolManager, to, uint256(int256(amount1)), false);
     }
 }
