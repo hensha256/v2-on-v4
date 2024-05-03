@@ -11,7 +11,7 @@ import {CurrencySettleTake} from "@uniswap/v4-core/src/libraries/CurrencySettleT
 import {IV4Router} from "./interfaces/IV4Router.sol";
 import {PathKey} from "./libraries/PathKey.sol";
 
-contract SwapRouterNoChecks is IV4Router {
+contract V4Router is IV4Router {
     using CurrencyLibrary for Currency;
     using CurrencySettleTake for Currency;
     using Hooks for IHooks;
