@@ -8,8 +8,8 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {CurrencySettleTake} from "@uniswap/v4-core/src/libraries/CurrencySettleTake.sol";
-import {IV4Router} from "./IV4Router.sol";
-import {PathKey} from "./PathKey.sol";
+import {IV4Router} from "./interfaces/IV4Router.sol";
+import {PathKey} from "./libraries/PathKey.sol";
 
 contract SwapRouterNoChecks is IV4Router {
     using CurrencyLibrary for Currency;

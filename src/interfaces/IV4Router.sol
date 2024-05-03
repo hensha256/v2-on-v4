@@ -8,7 +8,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
-import {PathKey} from "./PathKey.sol";
+import {PathKey} from "../libraries/PathKey.sol";
 
 /// @title UniswapV4Routing
 /// @notice Abstract contract that contains all internal logic needed for routing through Uniswap V4 pools
