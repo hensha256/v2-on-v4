@@ -7,6 +7,7 @@ import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockC
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {CurrencySettleTake} from "@uniswap/v4-core/src/libraries/CurrencySettleTake.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 // Solmate
@@ -39,9 +40,7 @@ contract V2PairHook is BaseHook, ERC20 {
         BURN
     }
 
-    // TODO 6909 integ
     // TODO delete v2 submodule
-    // TODO swap function
     // TODO combine all hooks to 1 - separate wrapper for rebasing
 
     uint256 public constant MINIMUM_LIQUIDITY = 10 ** 3;
@@ -52,6 +51,9 @@ contract V2PairHook is BaseHook, ERC20 {
     uint128 private reserves0;
     uint128 private reserves1;
     uint256 public kLast; // reserves0 * reserves1, as of immediately after the most recent liquidity event
+
+    // keccak(DeltaUnspecified) - 1
+    bytes32 constant DELTA_UNSPECIFIED_SLOT = 0x2e5feb220472ad9c92768617797b419bfabdc71375060ca8a1052c1ad7a5383b;
 
     // TODO lock???
 
@@ -68,11 +70,11 @@ contract V2PairHook is BaseHook, ERC20 {
     // ******************** V2 FUNCTIONS ********************
 
     // this low-level function should be called from a contract which performs important safety checks
-    function mint(address payer, address recipient) external returns (uint256 liquidity) {
+    function mint(address to) external returns (uint256 liquidity) {
         (uint128 _reserves0, uint128 _reserves1) = getReserves();
         uint256 _totalSupply = totalSupply;
 
-        // TODO fee on transfer this doesnt work
+        // The caller has already minted 6909s on the PoolManager to this address
         uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
         uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency1));
         uint256 amount0 = balance0 - _reserves0;
@@ -86,18 +88,14 @@ contract V2PairHook is BaseHook, ERC20 {
                 Math.min((amount0 * _totalSupply).unsafeDiv(_reserves0), (amount1 * _totalSupply).unsafeDiv(_reserves1));
         }
         if (liquidity == 0) revert InsufficientLiquidityMinted();
-        _mint(recipient, liquidity);
-
-        _mint6909s(amount0, amount1, payer);
-        balance0 -= amount0;
-        balance1 -= amount1;
+        _mint(to, liquidity);
 
         _update(balance0, balance1);
         emit Mint(msg.sender, amount0, amount1);
     }
 
     // this low-level function should be called from a contract which performs important safety checks
-    function burn(address recipient) external returns (uint256 amount0, uint256 amount1) {
+    function burn(address to) external returns (uint256 amount0, uint256 amount1) {
         uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
         uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency1));
         uint256 liquidity = balanceOf[address(this)];
@@ -108,12 +106,12 @@ contract V2PairHook is BaseHook, ERC20 {
 
         _burn(address(this), liquidity);
 
-        _burn6909s(amount0, amount1, recipient);
+        _burn6909s(amount0, amount1, to);
         balance0 -= amount0;
         balance1 -= amount1;
 
         _update(balance0, balance1);
-        emit Burn(msg.sender, amount0, amount1, recipient);
+        emit Burn(msg.sender, amount0, amount1, to);
     }
 
     // force balances to match reserves
@@ -188,10 +186,29 @@ contract V2PairHook is BaseHook, ERC20 {
 
         _update(balance0, balance1);
 
+        // amountIn positive as hook takes it, amountOut negative as hook gives it
+        int128 deltaUnspecified = exactIn ? -int128(uint128(amountOut)) : int128(uint128(amountIn));
+        assembly {
+            tstore(DELTA_UNSPECIFIED_SLOT, deltaUnspecified)
+        }
+
         emit Swap(amountIn, amountOut);
 
         // return -amountSpecified to no-op the concentrated liquidity swap
         return (IHooks.beforeSwap.selector, int128(-params.amountSpecified));
+    }
+
+    function afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
+        external
+        view
+        override
+        returns (bytes4, int128)
+    {
+        int128 deltaUnspecified;
+        assembly {
+            deltaUnspecified := tload(DELTA_UNSPECIFIED_SLOT)
+        }
+        return (IHooks.afterSwap.selector, deltaUnspecified);
     }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
