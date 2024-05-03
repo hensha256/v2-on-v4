@@ -12,13 +12,18 @@ import {Test, console2} from "forge-std/Test.sol";
 import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 contract V2PairHookTest is Test {
     uint160 public constant SQRT_RATIO_1_1 = 79228162514264337593543950336;
 
     V2PairHook hook;
+    V2PairHook nativeHook;
+
+    PoolKey key;
+    PoolKey nativeKey;
+
     Currency currency0;
     Currency currency1;
     PoolManager manager;
@@ -53,6 +58,24 @@ contract V2PairHookTest is Test {
         V2PairHook impl = new V2PairHook();
         vm.etch(hookAddr, address(impl).code);
         hook = V2PairHook(hookAddr);
+        Currency _currency0 = currency0;
+
+        address nativeHookAddr = address(uint160(hookAddr) + 1);
+        currency0 = CurrencyLibrary.NATIVE;
+        impl = new V2PairHook();
+        vm.etch(nativeHookAddr, address(impl).code);
+        nativeHook = V2PairHook(nativeHookAddr);
+
+        currency0 = _currency0;
+
+        key = PoolKey({currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 1, hooks: hook});
+        nativeKey = PoolKey({
+            currency0: CurrencyLibrary.NATIVE,
+            currency1: currency1,
+            fee: 0,
+            tickSpacing: 1,
+            hooks: nativeHook
+        });
     }
 
     function test_hookAddress_isValid() public view {
@@ -60,18 +83,30 @@ contract V2PairHookTest is Test {
     }
 
     function test_initialize_succeeds() public {
-        PoolKey memory key = PoolKey({currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 1, hooks: hook});
-
         manager.initialize(key, SQRT_RATIO_1_1, "");
     }
 
+    function test_initialize_succeeds_native() public {
+        manager.initialize(nativeKey, SQRT_RATIO_1_1, "");
+    }
+
     function test_mint_liquidity() public {
-        PoolKey memory key = PoolKey({currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 1, hooks: hook});
         manager.initialize(key, SQRT_RATIO_1_1, "");
 
         uint256 balanceBefore = hook.balanceOf(address(this));
         uint256 liquidity = liquidityRouter.addLiquidity(hook, 1e18, 1e18);
         uint256 balanceAfter = hook.balanceOf(address(this));
+
+        assertEq(balanceBefore + liquidity, balanceAfter);
+        assertGt(liquidity, 0);
+    }
+
+    function test_mint_liquidity_native() public {
+        manager.initialize(nativeKey, SQRT_RATIO_1_1, "");
+
+        uint256 balanceBefore = nativeHook.balanceOf(address(this));
+        uint256 liquidity = liquidityRouter.addLiquidity{value: 1e18}(nativeHook, 1e18, 1e18);
+        uint256 balanceAfter = nativeHook.balanceOf(address(this));
 
         assertEq(balanceBefore + liquidity, balanceAfter);
         assertGt(liquidity, 0);
