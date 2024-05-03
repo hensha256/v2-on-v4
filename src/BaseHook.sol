@@ -17,10 +17,6 @@ abstract contract BaseHook is IHooks {
     /// @notice The address of the pool manager
     IPoolManager public immutable poolManager;
 
-    constructor() {
-        validateHookAddress(this);
-    }
-
     /// @dev Only the pool manager may call this function
     modifier poolManagerOnly() {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
@@ -44,8 +40,8 @@ abstract contract BaseHook is IHooks {
     // this function is virtual so that we can override it during testing,
     // which allows us to deploy an implementation to any address
     // and then etch the bytecode into the correct address
-    function validateHookAddress(BaseHook _this) internal pure virtual {
-        Hooks.validateHookPermissions(_this, getHookPermissions());
+    function validateHookAddress() public view virtual {
+        Hooks.validateHookPermissions(BaseHook(address(this)), getHookPermissions());
     }
 
     function lockAcquired(bytes calldata data) external virtual poolManagerOnly returns (bytes memory) {
