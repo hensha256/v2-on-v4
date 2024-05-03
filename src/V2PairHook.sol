@@ -11,7 +11,7 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 // Solmate
-import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
 // Local
 import {Math} from "./libraries/Math.sol";
 import {UnsafeMath} from "./libraries/UnsafeMath.sol";
@@ -34,11 +34,6 @@ contract V2PairHook is BaseHook, ERC20 {
     event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
     event Swap(uint256 amountIn, uint256 amountOut);
     event Sync(uint128 reserves0, uint128 reserves1);
-
-    enum Action {
-        MINT,
-        BURN
-    }
 
     // TODO delete v2 submodule
     // TODO combine all hooks to 1 - separate wrapper for rebasing
@@ -272,30 +267,18 @@ contract V2PairHook is BaseHook, ERC20 {
         (input, output) = zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
     }
 
-    // ******************** 6909 MINTING AND BURNING ********************
-
-    function _mint6909s(uint256 amount0, uint256 amount1, address from) internal {
-        poolManager.unlock(abi.encode(Action.MINT, amount0, amount1, from));
-    }
+    // ******************** 6909 BURNING ********************
 
     function _burn6909s(uint256 amount0, uint256 amount1, address to) internal {
-        poolManager.unlock(abi.encode(Action.BURN, amount0, amount1, to));
+        poolManager.unlock(abi.encode(amount0, amount1, to));
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
-        (Action action, uint256 amount0, uint256 amount1, address user) =
-            abi.decode(data, (Action, uint256, uint256, address));
+        (uint256 amount0, uint256 amount1, address to) = abi.decode(data, (uint256, uint256, address));
 
-        if (action == Action.MINT) {
-            poolManager.mint(address(this), CurrencyLibrary.toId(currency0), amount0);
-            poolManager.mint(address(this), CurrencyLibrary.toId(currency1), amount1);
-            currency0.settle(poolManager, user, amount0, false);
-            currency1.settle(poolManager, user, amount1, false);
-        } else if (action == Action.BURN) {
-            poolManager.burn(address(this), CurrencyLibrary.toId(currency0), amount0);
-            poolManager.burn(address(this), CurrencyLibrary.toId(currency1), amount1);
-            currency0.take(poolManager, user, amount0, false);
-            currency1.take(poolManager, user, amount1, false);
-        }
+        poolManager.burn(address(this), CurrencyLibrary.toId(currency0), amount0);
+        poolManager.burn(address(this), CurrencyLibrary.toId(currency1), amount1);
+        currency0.take(poolManager, to, amount0, false);
+        currency1.take(poolManager, to, amount1, false);
     }
 }

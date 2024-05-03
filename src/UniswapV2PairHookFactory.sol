@@ -56,8 +56,8 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
 
     function _getParameters() internal view returns (Currency currency0, Currency currency1) {
         assembly {
-            token0 := tload(TOKEN_0_SLOT)
-            token1 := tload(TOKEN_1_SLOT)
+            currency0 := tload(TOKEN_0_SLOT)
+            currency1 := tload(TOKEN_1_SLOT)
         }
     }
 
@@ -87,8 +87,13 @@ contract UniswapV2PairHookFactory is IUniswapV2PairHookFactory {
 
         // call v4 initialize pool
         // fee and tickspacing are meaningless, they're set to 0 and 1 for all V2 Pair Hooks
-        PoolKey memory key =
-            PoolKey({token0: Currency.wrap(token0), token1: Currency.wrap(token1), fee: 0, tickSpacing: 1, hooks: hook});
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee: 0,
+            tickSpacing: 1,
+            hooks: hook
+        });
 
         poolManager.initialize(key, 1, "");
 
