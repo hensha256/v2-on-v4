@@ -3,22 +3,24 @@ pragma solidity ^0.8.24;
 
 // V4 core
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {CurrencySettleTake} from "@uniswap/v4-core/src/libraries/CurrencySettleTake.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 // Solmate
-import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 // Local
 import {Math} from "./libraries/Math.sol";
 import {UnsafeMath} from "./libraries/UnsafeMath.sol";
-import {IV2PairHookDeployer} from "./interfaces/IV2PairHookDeployer.sol";
+import {IUniswapV2PairHookFactory} from "./interfaces/IUniswapV2PairHookFactory.sol";
 import {BaseHook} from "./BaseHook.sol";
 
 contract V2PairHook is BaseHook, ERC20 {
-    using SafeTransferLib for ERC20;
     using UnsafeMath for uint256;
+    using CurrencySettleTake for Currency;
+    using CurrencyLibrary for Currency;
 
     error BalanceOverflow();
     error InvalidInitialization();
@@ -29,14 +31,7 @@ contract V2PairHook is BaseHook, ERC20 {
 
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
     event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
-    event Swap(
-        address indexed sender,
-        uint256 amount0In,
-        uint256 amount1In,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address indexed to
-    );
+    event Swap(uint256 amountIn, uint256 amountOut);
     event Sync(uint128 reserves0, uint128 reserves1);
 
     enum Action {
@@ -61,7 +56,7 @@ contract V2PairHook is BaseHook, ERC20 {
     // TODO lock???
 
     constructor() ERC20("Uniswap V4-V2", "UNI-V4-V2", 18) {
-        (token0, token1, poolManager) = IV2PairHookDeployer(msg.sender).parameters();
+        (currency0, currency1, poolManager) = IUniswapV2PairHookFactory(msg.sender).parameters();
         factory = msg.sender;
     }
 
@@ -73,12 +68,13 @@ contract V2PairHook is BaseHook, ERC20 {
     // ******************** V2 FUNCTIONS ********************
 
     // this low-level function should be called from a contract which performs important safety checks
-    function mint(address to) external returns (uint256 liquidity) {
+    function mint(address payer, address recipient) external returns (uint256 liquidity) {
         (uint128 _reserves0, uint128 _reserves1) = getReserves();
         uint256 _totalSupply = totalSupply;
 
+        // TODO fee on transfer this doesnt work
         uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
-        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency1));
         uint256 amount0 = balance0 - _reserves0;
         uint256 amount1 = balance1 - _reserves1;
 
@@ -90,48 +86,45 @@ contract V2PairHook is BaseHook, ERC20 {
                 Math.min((amount0 * _totalSupply).unsafeDiv(_reserves0), (amount1 * _totalSupply).unsafeDiv(_reserves1));
         }
         if (liquidity == 0) revert InsufficientLiquidityMinted();
-        _mint(to, liquidity);
+        _mint(recipient, liquidity);
+
+        _mint6909s(amount0, amount1, payer);
+        balance0 -= amount0;
+        balance1 -= amount1;
 
         _update(balance0, balance1);
         emit Mint(msg.sender, amount0, amount1);
     }
 
     // this low-level function should be called from a contract which performs important safety checks
-    function burn(address to) external returns (uint256 amount0, uint256 amount1) {
-        ERC20 _token0 = token0; // gas savings
-        ERC20 _token1 = token1; // gas savings
-        uint256 _totalSupply = totalSupply; // gas savings
-
+    function burn(address recipient) external returns (uint256 amount0, uint256 amount1) {
         uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
-        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency1));
         uint256 liquidity = balanceOf[address(this)];
 
-        amount0 = (liquidity * balance0).unsafeDiv(_totalSupply); // using balances ensures pro-rata distribution
-        amount1 = (liquidity * balance1).unsafeDiv(_totalSupply); // using balances ensures pro-rata distribution
+        amount0 = (liquidity * balance0).unsafeDiv(totalSupply); // using balances ensures pro-rata distribution
+        amount1 = (liquidity * balance1).unsafeDiv(totalSupply); // using balances ensures pro-rata distribution
         if (amount0 == 0 || amount1 == 0) revert InsufficientLiquidityBurnt();
 
         _burn(address(this), liquidity);
 
-        _token0.safeTransfer(to, amount0);
-        _token1.safeTransfer(to, amount1);
-        balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
-        balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        _burn6909s(amount0, amount1, recipient);
+        balance0 -= amount0;
+        balance1 -= amount1;
 
         _update(balance0, balance1);
-        emit Burn(msg.sender, amount0, amount1, to);
+        emit Burn(msg.sender, amount0, amount1, recipient);
     }
 
     // force balances to match reserves
     function skim(address to) external {
-        ERC20 _token0 = token0; // gas savings
-        ERC20 _token1 = token1; // gas savings
-        _token0.safeTransfer(to, _token0.balanceOf(address(this)) - reserves0);
-        _token1.safeTransfer(to, _token1.balanceOf(address(this)) - reserves1);
+        currency0.transfer(to, currency0.balanceOf(address(this)) - reserves0);
+        currency1.transfer(to, currency1.balanceOf(address(this)) - reserves1);
     }
 
     // force reserves to match balances
     function sync() external {
-        _update(token0.balanceOf(address(this)), token1.balanceOf(address(this)));
+        _update(currency0.balanceOf(address(this)), currency1.balanceOf(address(this)));
     }
 
     // ******************** HOOK FUNCTIONS ********************
@@ -146,7 +139,8 @@ contract V2PairHook is BaseHook, ERC20 {
         // TODO think
         if (
             sender != factory || key.fee != 0 || key.tickSpacing != 1
-                || Currency.unwrap(key.currency0) != address(token0) || Currency.unwrap(key.currency1) != address(token1)
+                || Currency.unwrap(key.currency0) != Currency.unwrap(currency0)
+                || Currency.unwrap(key.currency1) != Currency.unwrap(currency1)
         ) revert InvalidInitialization();
         return IHooks.beforeInitialize.selector;
     }
@@ -163,6 +157,7 @@ contract V2PairHook is BaseHook, ERC20 {
 
     function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata)
         external
+        override
         poolManagerOnly
         returns (bytes4, int128)
     {
@@ -183,6 +178,9 @@ contract V2PairHook is BaseHook, ERC20 {
         // take the input tokens of the swap into the pair
         poolManager.mint(address(this), CurrencyLibrary.toId(inputCurrency), amountIn);
         poolManager.burn(address(this), CurrencyLibrary.toId(outputCurrency), amountOut);
+
+        uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
+        uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency1));
 
         // uint balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
         // uint balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
@@ -225,7 +223,7 @@ contract V2PairHook is BaseHook, ERC20 {
     }
 
     // given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
-    function _getAmountOut(bool zeroForOne, uint256 amountIn) internal pure returns (uint256 amountOut) {
+    function _getAmountOut(bool zeroForOne, uint256 amountIn) internal view returns (uint256 amountOut) {
         require(amountIn > 0, "UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT");
 
         (uint256 reservesIn, uint256 reservesOut) = zeroForOne ? (reserves0, reserves1) : (reserves1, reserves0);
@@ -238,7 +236,7 @@ contract V2PairHook is BaseHook, ERC20 {
     }
 
     // given an output amount of an asset and pair reserves, returns a required input amount of the other asset
-    function _getAmountIn(bool zeroForOne, uint256 amountOut) internal pure returns (uint256 amountIn) {
+    function _getAmountIn(bool zeroForOne, uint256 amountOut) internal view returns (uint256 amountIn) {
         require(amountOut > 0, "UniswapV2Library: INSUFFICIENT_OUTPUT_AMOUNT");
 
         (uint256 reservesIn, uint256 reservesOut) = zeroForOne ? (reserves0, reserves1) : (reserves1, reserves0);
@@ -252,16 +250,35 @@ contract V2PairHook is BaseHook, ERC20 {
     function _getInputOutput(PoolKey calldata key, bool zeroForOne)
         internal
         pure
-        returns (Currency input, Currency output, uint256 amount)
+        returns (Currency input, Currency output)
     {
         (input, output) = zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
     }
 
-    function _mint6909s(uint256 amount0, uint256 amount1) internal {
-        poolManager.unlock(abi.encode(Action.MINT, amount0, amount1));
+    // ******************** 6909 MINTING AND BURNING ********************
+
+    function _mint6909s(uint256 amount0, uint256 amount1, address from) internal {
+        poolManager.unlock(abi.encode(Action.MINT, amount0, amount1, from));
     }
 
-    function _burn6909s(uint256 amount0, uint256 amount1) internal {
-        poolManager.unlock(abi.encode(Action.BURN, amount0, amount1));
+    function _burn6909s(uint256 amount0, uint256 amount1, address to) internal {
+        poolManager.unlock(abi.encode(Action.BURN, amount0, amount1, to));
+    }
+
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        (Action action, uint256 amount0, uint256 amount1, address user) =
+            abi.decode(data, (Action, uint256, uint256, address));
+
+        if (action == Action.MINT) {
+            poolManager.mint(address(this), CurrencyLibrary.toId(currency0), amount0);
+            poolManager.mint(address(this), CurrencyLibrary.toId(currency1), amount1);
+            currency0.settle(poolManager, user, amount0, false);
+            currency1.settle(poolManager, user, amount1, false);
+        } else if (action == Action.BURN) {
+            poolManager.burn(address(this), CurrencyLibrary.toId(currency0), amount0);
+            poolManager.burn(address(this), CurrencyLibrary.toId(currency1), amount1);
+            currency0.take(poolManager, user, amount0, false);
+            currency1.take(poolManager, user, amount1, false);
+        }
     }
 }
