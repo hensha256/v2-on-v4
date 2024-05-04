@@ -4,12 +4,13 @@ pragma solidity ^0.8.24;
 import {Test, console} from "forge-std/Test.sol";
 import {UniswapV2PairHookFactory} from "../src/UniswapV2PairHookFactory.sol";
 import {UniswapV2PairHookFactoryMock} from "./mocks/UniswapV2PairHookFactoryMock.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
 contract UniswapV6HookFactoryTest is Test {
     UniswapV2PairHookFactoryMock factory;
 
     function setUp() public {
-        factory = new UniswapV2PairHookFactoryMock(address(this));
+        factory = new UniswapV2PairHookFactoryMock(IPoolManager(address(0)));
     }
 
     function test_validPermissions() public {

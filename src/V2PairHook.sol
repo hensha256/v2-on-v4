@@ -175,9 +175,9 @@ contract V2PairHook is BaseHook, ERC20 {
         uint256 balance0 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency0));
         uint256 balance1 = poolManager.balanceOf(address(this), CurrencyLibrary.toId(currency1));
 
-        // uint balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
-        // uint balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
-        // require(balance0Adjusted.mul(balance1Adjusted) >= uint(_reserves0).mul(_reserves1).mul(1000**2), 'UniswapV2: K');
+        // uint256 balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
+        // uint256 balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
+        // require(balance0Adjusted.mul(balance1Adjusted) >= uint256(_reserves0).mul(_reserves1).mul(1000**2), 'UniswapV2: K');
 
         _update(balance0, balance1);
 
