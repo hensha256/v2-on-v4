@@ -128,7 +128,7 @@ contract V2PairHookTest is Test {
         factory.setPair(address(0), Currency.unwrap(currency1), address(nativeHook));
 
         // add liquidity to native pair
-        uint256 liquidity = liquidityRouter.addLiquidity{value: 1e18}(nativeHook, 1e18, 1e18);
+        liquidityRouter.addLiquidity{value: 1e18}(nativeHook, 1e18, 1e18);
 
         // swap
         address[] memory _path = new address[](2);

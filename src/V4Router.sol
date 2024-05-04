@@ -21,6 +21,8 @@ contract V4Router is Test, IUnlockCallback {
     IPoolManager public immutable poolManager;
     V2PairHook public immutable hook;
 
+    error InsufficientOutputReceived();
+
     constructor(IPoolManager _manager, V2PairHook _hook) {
         hook = _hook;
         poolManager = _manager;
@@ -45,7 +47,10 @@ contract V4Router is Test, IUnlockCallback {
         ensure(deadline)
         returns (uint256[] memory amounts)
     {
-        poolManager.unlock(abi.encode(amountOutMin, msg.value, path, to));
+        require(path[0] == address(0));
+        uint256 amountOut = abi.decode(poolManager.unlock(abi.encode(amountOutMin, msg.value, path, to)), (uint256));
+        amounts = new uint256[](1);
+        amounts[0] = amountOut;
     }
 
     function unlockCallback(bytes calldata rawData) external returns (bytes memory) {
@@ -55,23 +60,25 @@ contract V4Router is Test, IUnlockCallback {
             abi.decode(rawData, (uint256, uint256, address[], address));
 
         require(path.length == 2);
-        require(path[0] == address(0));
 
-        PoolKey memory key;
-        key.currency0 = CurrencyLibrary.NATIVE;
-        key.currency1 = Currency.wrap(path[1]);
-        key.fee = 0;
-        key.tickSpacing = 1;
-        key.hooks = hook;
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(path[0]),
+            currency1: Currency.wrap(path[1]),
+            fee: 0,
+            tickSpacing: 1,
+            hooks: hook
+        });
 
         IPoolManager.SwapParams memory params =
             IPoolManager.SwapParams({zeroForOne: true, amountSpecified: -int256(amountIn), sqrtPriceLimitX96: 0});
 
         BalanceDelta delta = poolManager.swap(key, params, "");
 
-        int128 amount1 = delta.amount1();
+        uint256 amountOut = uint256(int256(delta.amount1()));
+        if (amountOut < amountOutMin) revert InsufficientOutputReceived();
 
         CurrencyLibrary.NATIVE.settle(poolManager, address(this), amountIn, false);
-        key.currency1.take(poolManager, to, uint256(int256(amount1)), false);
+        key.currency1.take(poolManager, to, amountOut, false);
+        return abi.encode(amountOut);
     }
 }
